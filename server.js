@@ -5,9 +5,21 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Middleware
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+  origin: '*', // Allow all origins for testing; restrict in production (e.g., 'https://your-frontend-domain.com')
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type']
+}));
 
+// Request logging for debugging
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
+
+// MongoDB Connection
 mongoose.connect('mongodb+srv://henri8274:1QCtcecpyFCS7oQF@cluster0.u63gt3d.mongodb.net/fone-ouvido?retryWrites=true&w=majority')
   .then(() => console.log('✅ Conectado ao MongoDB Atlas (banco: fone-ouvido)'))
   .catch(err => console.error('❌ Erro ao conectar ao MongoDB:', err));
@@ -30,8 +42,9 @@ const commentSchema = new mongoose.Schema({
 const Contact = mongoose.model('Contact', contactSchema);
 const Comment = mongoose.model('Comment', commentSchema);
 
+// Health check endpoint
 app.get('/', (req, res) => {
-  res.send('Olá Mundo!');
+  res.status(200).json({ message: 'Olá Mundo! Servidor está funcionando.' });
 });
 
 // Endpoint para contatos
@@ -77,6 +90,12 @@ app.get('/api/comments', async (req, res) => {
   }
 });
 
+// Handle 404 errors
+app.use((req, res) => {
+  res.status(404).json({ error: `Rota ${req.url} não encontrada` });
+});
+
+// Start server
 app.listen(port, () => {
   console.log(`🚀 App está rodando na porta ${port}`);
 });
