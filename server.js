@@ -8,7 +8,7 @@ const port = process.env.PORT || 3000;
 // Middleware
 app.use(express.json());
 app.use(cors({
-  origin: '*', // Allow all origins for testing; restrict in production (e.g., 'https://your-frontend-domain.com')
+  origin: '*', // Allow all origins for testing; restrict in production
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type']
 }));
@@ -27,7 +27,11 @@ mongoose.connect('mongodb+srv://henri8274:1QCtcecpyFCS7oQF@cluster0.u63gt3d.mong
 // Schema para contatos
 const contactSchema = new mongoose.Schema({
   name: { type: String, required: true },
-  email: { type: String, required: true },
+  email: { 
+    type: String, 
+    required: true, 
+    match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Email inválido'] 
+  },
   message: { type: String, required: true },
   createdAt: { type: Date, default: Date.now }
 });
@@ -35,7 +39,11 @@ const contactSchema = new mongoose.Schema({
 // Schema para comentários
 const commentSchema = new mongoose.Schema({
   name: { type: String, required: true },
-  email: { type: String, required: true, match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Email inválido'] },
+  email: { 
+    type: String, 
+    required: true, 
+    match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Email inválido'] 
+  },
   message: { type: String, required: true },
   createdAt: { type: Date, default: Date.now }
 });
@@ -52,6 +60,7 @@ app.get('/', (req, res) => {
 app.post('/api/contact', async (req, res) => {
   try {
     const { name, email, message } = req.body;
+    console.log('Payload recebido (contact):', { name, email, message });
     if (!name || !email || !message) {
       return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
     }
@@ -60,7 +69,10 @@ app.post('/api/contact', async (req, res) => {
     res.status(201).json({ message: 'Mensagem enviada com sucesso!' });
   } catch (error) {
     console.error('Erro ao salvar contato:', error);
-    res.status(500).json({ error: 'Erro ao salvar a mensagem' });
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ error: 'Erro de validação', details: error.errors });
+    }
+    res.status(500).json({ error: 'Erro ao salvar a mensagem', details: error.message });
   }
 });
 
@@ -68,6 +80,7 @@ app.post('/api/contact', async (req, res) => {
 app.post('/api/comments', async (req, res) => {
   try {
     const { name, email, message } = req.body;
+    console.log('Payload recebido (comment):', { name, email, message });
     if (!name || !email || !message) {
       return res.status(400).json({ error: 'Nome, email e mensagem são obrigatórios' });
     }
@@ -76,7 +89,10 @@ app.post('/api/comments', async (req, res) => {
     res.status(201).json({ message: 'Comentário enviado com sucesso!', comment });
   } catch (error) {
     console.error('Erro ao salvar comentário:', error);
-    res.status(500).json({ error: 'Erro ao salvar o comentário' });
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ error: 'Erro de validação', details: error.errors });
+    }
+    res.status(500).json({ error: 'Erro ao salvar o comentário', details: error.message });
   }
 });
 
@@ -87,7 +103,7 @@ app.get('/api/comments', async (req, res) => {
     res.status(200).json(comments);
   } catch (error) {
     console.error('Erro ao obter comentários:', error);
-    res.status(500).json({ error: 'Erro ao obter comentários' });
+    res.status(500).json({ error: 'Erro ao obter comentários', details: error.message });
   }
 });
 
