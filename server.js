@@ -35,6 +35,7 @@ const contactSchema = new mongoose.Schema({
 // Schema para comentários
 const commentSchema = new mongoose.Schema({
   name: { type: String, required: true },
+  email: { type: String, required: true, match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Email inválido'] },
   message: { type: String, required: true },
   createdAt: { type: Date, default: Date.now }
 });
@@ -66,11 +67,11 @@ app.post('/api/contact', async (req, res) => {
 // Endpoint para criar comentários
 app.post('/api/comments', async (req, res) => {
   try {
-    const { name, message } = req.body;
-    if (!name || !message) {
-      return res.status(400).json({ error: 'Nome e mensagem são obrigatórios' });
+    const { name, email, message } = req.body;
+    if (!name || !email || !message) {
+      return res.status(400).json({ error: 'Nome, email e mensagem são obrigatórios' });
     }
-    const comment = new Comment({ name, message });
+    const comment = new Comment({ name, email, message });
     await comment.save();
     res.status(201).json({ message: 'Comentário enviado com sucesso!', comment });
   } catch (error) {
