@@ -1,16 +1,27 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+// Create HTTP server and integrate Socket.IO
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*', // Allow all origins for testing; restrict in production
+    methods: ['GET', 'POST'],
+  },
+});
 
 // Middleware
 app.use(express.json());
 app.use(cors({
   origin: '*', // Allow all origins for testing; restrict in production
   methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type']
+  allowedHeaders: ['Content-Type'],
 }));
 
 // Request logging for debugging
@@ -33,7 +44,7 @@ const contactSchema = new mongoose.Schema({
     match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Email inválido'] 
   },
   message: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
 });
 
 // Schema para comentários
@@ -45,11 +56,19 @@ const commentSchema = new mongoose.Schema({
     match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Email inválido'] 
   },
   message: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
 });
 
 const Contact = mongoose.model('Contact', contactSchema);
 const Comment = mongoose.model('Comment', commentSchema);
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  console.log(`Novo cliente conectado: ${socket.id}`);
+  socket.on('disconnect', () => {
+    console.log(`Cliente desconectado: ${socket.id}`);
+  });
+});
 
 // Health check endpoint
 app.get('/', (req, res) => {
@@ -66,6 +85,8 @@ app.post('/api/contact', async (req, res) => {
     }
     const contact = new Contact({ name, email, message });
     await contact.save();
+    // Emitir evento para todos os clientes
+    io.emit('newContact', { name, email, message, createdAt: contact.createdAt });
     res.status(201).json({ message: 'Mensagem enviada com sucesso!' });
   } catch (error) {
     console.error('Erro ao salvar contato:', error);
@@ -86,6 +107,8 @@ app.post('/api/comments', async (req, res) => {
     }
     const comment = new Comment({ name, email, message });
     await comment.save();
+    // Emitir evento para todos os clientes
+    io.emit('newComment', { name, email, message, createdAt: comment.createdAt });
     res.status(201).json({ message: 'Comentário enviado com sucesso!', comment });
   } catch (error) {
     console.error('Erro ao salvar comentário:', error);
@@ -113,6 +136,6 @@ app.use((req, res) => {
 });
 
 // Start server
-app.listen(port, () => {
+server.listen(port, () => {
   console.log(`🚀 App está rodando na porta ${port}`);
 });
