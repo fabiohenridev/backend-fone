@@ -11,15 +11,22 @@ const port = process.env.PORT || 3000;
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: '*', // Allow all origins for testing; restrict in production
+    origin: process.env.NODE_ENV === 'production' ? 'https://your-frontend-domain.com' : '*', // Substitua por seu domínio em produção
     methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type'],
   },
+  pingTimeout: 60000, // Tempo limite para desconexão
+  pingInterval: 25000, // Intervalo de verificação
+  reconnection: true, // Habilitar reconexão automática
+  reconnectionAttempts: Infinity, // Tentar reconectar indefinidamente
+  reconnectionDelay: 1000, // Atraso inicial entre tentativas
+  reconnectionDelayMax: 5000, // Atraso máximo entre tentativas
 });
 
 // Middleware
 app.use(express.json());
 app.use(cors({
-  origin: '*', // Allow all origins for testing; restrict in production
+  origin: process.env.NODE_ENV === 'production' ? 'https://your-frontend-domain.com' : '*', // Substitua por seu domínio em produção
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type'],
 }));
@@ -30,10 +37,20 @@ app.use((req, res, next) => {
   next();
 });
 
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(`[${new Date().toISOString()}] Erro no servidor:`, err.stack);
+  res.status(500).json({ error: 'Erro interno do servidor', details: err.message });
+});
+
 // MongoDB Connection
-mongoose.connect('mongodb+srv://henri8274:1QCtcecpyFCS7oQF@cluster0.u63gt3d.mongodb.net/fone-ouvido?retryWrites=true&w=majority')
+mongoose.connect('mongodb+srv://henri8274:1QCtcecpyFCS7oQF@cluster0.u63gt3d.mongodb.net/fone-ouvido?retryWrites=true&w=majority', {
+  serverSelectionTimeoutMS: 10000,
+  connectTimeoutMS: 10000,
+  socketTimeoutMS: 45000, // Aumentar timeout do socket
+})
   .then(() => console.log('✅ Conectado ao MongoDB Atlas (banco: fone-ouvido)'))
-  .catch(err => console.error('❌ Erro ao conectar ao MongoDB:', err));
+  .catch(err => console.error('❌ Erro ao conectar ao MongoDB:', err.message, err.stack));
 
 // Schema para contatos
 const contactSchema = new mongoose.Schema({
@@ -65,14 +82,26 @@ const Comment = mongoose.model('Comment', commentSchema);
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log(`Novo cliente conectado: ${socket.id}`);
-  socket.on('disconnect', () => {
-    console.log(`Cliente desconectado: ${socket.id}`);
+  socket.on('disconnect', (reason) => {
+    console.log(`Cliente desconectado: ${socket.id}, motivo: ${reason}`);
+  });
+  socket.on('reconnect', (attempt) => {
+    console.log(`Cliente reconectado: ${socket.id}, tentativa: ${attempt}`);
+  });
+  socket.on('error', (error) => {
+    console.error(`Erro no Socket.IO: ${error.message}`);
   });
 });
 
 // Health check endpoint
 app.get('/', (req, res) => {
-  res.status(200).json({ message: 'Olá Mundo! Servidor está funcionando.' });
+  res.status(200).json({ message: 'Servidor está funcionando.', status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Ping endpoint to keep the server alive
+app.get('/ping', (req, res) => {
+  console.log(`[${new Date().toISOString()}] Ping recebido`);
+  res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
 // Endpoint para contatos
@@ -85,7 +114,6 @@ app.post('/api/contact', async (req, res) => {
     }
     const contact = new Contact({ name, email, message });
     await contact.save();
-    // Emitir evento para todos os clientes
     io.emit('newContact', { name, email, message, createdAt: contact.createdAt });
     res.status(201).json({ message: 'Mensagem enviada com sucesso!' });
   } catch (error) {
@@ -107,7 +135,6 @@ app.post('/api/comments', async (req, res) => {
     }
     const comment = new Comment({ name, email, message });
     await comment.save();
-    // Emitir evento para todos os clientes
     io.emit('newComment', { name, email, message, createdAt: comment.createdAt });
     res.status(201).json({ message: 'Comentário enviado com sucesso!', comment });
   } catch (error) {
