@@ -14,7 +14,7 @@ const port = process.env.PORT || 3000;
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.NODE_ENV === 'production' ? ['https://foness.vercel.app'] : ['http://localhost:3000', 'https://foness.vercel.app'],
+    origin: process.env.NODE_ENV === 'production' ? ['https://foness.vercel.app'] : '*',
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type'],
   },
@@ -26,7 +26,7 @@ const io = new Server(server, {
 app.use(helmet());
 app.use(express.json());
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? ['https://foness.vercel.app'] : ['http://localhost:3000', 'https://foness.vercel.app'],
+  origin: process.env.NODE_ENV === 'production' ? ['https://foness.vercel.app'] : '*',
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type'],
 }));
@@ -34,7 +34,7 @@ app.use(cors({
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 200, // Aumentado para suportar mais requisições
+  max: 100,
   message: 'Muitas requisições. Tente novamente mais tarde.',
 });
 app.use('/api/', limiter);
@@ -45,18 +45,21 @@ app.use((req, res, next) => {
   next();
 });
 
+// Tratamento de erros
+app.use((err, req, res, next) => {
+  console.error(`[${new Date().toISOString()}] Erro:`, err.stack);
+  res.status(500).json({ error: 'Erro interno do servidor', details: err.message });
+});
+
 // Conexão MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://henri8274:1QCtcecpyFCS7oQF@cluster0.u63gt3d.mongodb.net/fone-ouvido?retryWrites=true&w=majority', {
+mongoose.connect('mongodb+srv://henri8274:1QCtcecpyFCS7oQF@cluster0.u63gt3d.mongodb.net/fone-ouvido?retryWrites=true&w=majority', {
   serverSelectionTimeoutMS: 10000,
   connectTimeoutMS: 10000,
   socketTimeoutMS: 45000,
   maxPoolSize: 10,
 })
   .then(() => console.log('✅ Conectado ao MongoDB'))
-  .catch(err => {
-    console.error('❌ Erro ao conectar ao MongoDB:', err.message);
-    process.exit(1); // Sai do processo se a conexão falhar
-  });
+  .catch(err => console.error('❌ Erro ao conectar ao MongoDB:', err.message));
 
 // Esquemas
 const contactSchema = new mongoose.Schema({
@@ -123,9 +126,6 @@ app.post('/api/contact', async (req, res) => {
     if (!name || !email || !message) {
       return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
     }
-    if (message.length > 500) {
-      return res.status(400).json({ error: 'A mensagem não pode exceder 500 caracteres' });
-    }
     const sanitizedData = {
       name: sanitize(name),
       email: sanitize(email),
@@ -149,9 +149,6 @@ app.post('/api/comments', async (req, res) => {
     if (!name || !email || !message) {
       return res.status(400).json({ error: 'Nome, email e mensagem são obrigatórios' });
     }
-    if (message.length > 500) {
-      return res.status(400).json({ error: 'O comentário não pode exceder 500 caracteres' });
-    }
     const sanitizedData = {
       name: sanitize(name),
       email: sanitize(email),
@@ -170,15 +167,11 @@ app.post('/api/comments', async (req, res) => {
 
 // Criar resposta
 app.post('/api/comments/reply', async (req, res) => {
-  console.log('Recebida requisição para /api/comments/reply:', req.body);
   try {
     const { name, email, message, parentId } = req.body;
     console.log('Resposta recebida:', { name, email, message, parentId });
     if (!name || !email || !message || !parentId) {
       return res.status(400).json({ error: 'Nome, email, mensagem e parentId são obrigatórios' });
-    }
-    if (message.length > 500) {
-      return res.status(400).json({ error: 'A resposta não pode exceder 500 caracteres' });
     }
     const sanitizedData = {
       name: sanitize(name),
@@ -211,15 +204,8 @@ app.get('/api/comments', async (req, res) => {
   }
 });
 
-// Tratamento de erros
-app.use((err, req, res, next) => {
-  console.error(`[${new Date().toISOString()}] Erro:`, err.stack);
-  res.status(500).json({ error: 'Erro interno do servidor', details: err.message });
-});
-
 // 404
 app.use((req, res) => {
-  console.log(`Rota não encontrada: ${req.method} ${req.url}`);
   res.status(404).json({ error: `Rota ${req.url} não encontrada` });
 });
 
