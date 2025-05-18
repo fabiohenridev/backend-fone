@@ -162,7 +162,7 @@ app.post('/api/comments', async (req, res) => {
     };
     const comment = new Comment(sanitizedData);
     await comment.save();
-    io.emit('newComment', { ...sanitizedData, createdAt: comment.createdAt });
+    io.emit('newComment', { ...sanitizedData, createdAt: comment.createdAt, _id: comment._id });
     res.status(201).json({ message: 'Comentário enviado com sucesso!', comment });
   } catch (error) {
     console.error('Erro ao salvar comentário:', error);
@@ -176,7 +176,10 @@ app.post('/api/comments', async (req, res) => {
 // Endpoint for retrieving comments
 app.get('/api/comments', async (req, res) => {
   try {
-    const comments = await Comment.find().sort({ createdAt: -1 }).lean();
+    const comments = await Comment.find()
+        .sort({ createdAt: -1 }) // Mais recente primeiro
+        .limit(50) // Limita a 50 comentários para otimizar
+        .lean();
     res.status(200).json(comments);
   } catch (error) {
     console.error('Erro ao obter comentários:', error);
