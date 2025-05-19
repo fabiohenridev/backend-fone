@@ -62,42 +62,38 @@ mongoose.connect('mongodb+srv://henri8274:1QCtcecpyFCS7oQF@cluster0.u63gt3d.mong
   .catch(err => console.error('❌ Erro ao conectar ao MongoDB:', err.message));
 
 // Esquemas
-const contactSchema = new mongoose.Schema({
-  name: { type: String, required: true, trim: true },
+const userSchema = new mongoose.Schema({
+  username: { 
+    type: String, 
+    required: true, 
+    trim: true, 
+    unique: true, 
+    minlength: 3,
+    maxlength: 20,
+    match: [/^[a-zA-Z0-9_]+$/, 'Usuário deve conter apenas letras, números ou sublinhados']
+  },
   email: { 
     type: String, 
     required: true, 
     trim: true,
+    unique: true,
     match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Email inválido'] 
   },
-  message: { type: String, required: true, trim: true },
   createdAt: { type: Date, default: Date.now },
 });
 
 const commentSchema = new mongoose.Schema({
-  name: { type: String, required: true, trim: true },
-  email: { 
-    type: String, 
-    required: true, 
-    trim: true,
-    match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Email inválido'] 
-  },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   message: { type: String, required: true, trim: true },
   createdAt: { type: Date, default: Date.now },
   replies: [{
-    name: { type: String, required: true, trim: true },
-    email: { 
-      type: String, 
-      required: true, 
-      trim: true,
-      match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Email inválido'] 
-    },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     message: { type: String, required: true, trim: true },
     createdAt: { type: Date, default: Date.now },
   }],
 });
 
-const Contact = mongoose.model('Contact', contactSchema);
+const User = mongoose.model('User', userSchema);
 const Comment = mongoose.model('Comment', commentSchema);
 
 // Socket.IO
@@ -118,47 +114,53 @@ app.get('/ping', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Endpoint de contato
-app.post('/api/contact', async (req, res) => {
+// Registrar usuário
+app.post('/api/users/register', async (req, res) => {
   try {
-    const { name, email, message } = req.body;
-    console.log('Contato recebido:', { name, email, message });
-    if (!name || !email || !message) {
-      return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
+    const { username, email } = req.body;
+    console.log('Tentativa de registro:', { username, email });
+    if (!username || !email) {
+      return res.status(400).json({ error: 'Usuário e email são obrigatórios' });
     }
     const sanitizedData = {
-      name: sanitize(name),
+      username: sanitize(username),
       email: sanitize(email),
-      message: sanitize(message),
     };
-    const contact = new Contact(sanitizedData);
-    await contact.save();
-    io.emit('newContact', { ...sanitizedData, createdAt: contact.createdAt });
-    res.status(201).json({ message: 'Mensagem enviada com sucesso!' });
+    const existingUser = await User.findOne({ $or: [{ username: sanitizedData.username }, { email: sanitizedData.email }] });
+    if (existingUser) {
+      return res.status(400).json({ error: existingUser.username === sanitizedData.username ? 'Usuário já existe' : 'Email já registrado' });
+    }
+    const user = new User(sanitizedData);
+    await user.save();
+    res.status(201).json({ message: 'Usuário registrado com sucesso!', user: { id: user._id, username: user.username } });
   } catch (error) {
-    console.error('Erro ao salvar contato:', error);
-    res.status(500).json({ error: 'Erro ao salvar mensagem', details: error.message });
+    console.error('Erro ao registrar usuário:', error);
+    res.status(500).json({ error: 'Erro ao registrar usuário', details: error.message });
   }
 });
 
 // Criar comentário
 app.post('/api/comments', async (req, res) => {
   try {
-    const { name, email, message } = req.body;
-    console.log('Comentário recebido:', { name, email, message });
-    if (!name || !email || !message) {
-      return res.status(400).json({ error: 'Nome, email e mensagem são obrigatórios' });
+    const { userId, message } = req.body;
+    console.log('Comentário recebido:', { userId, message });
+    if (!userId || !message) {
+      return res.status(400).json({ error: 'Usuário e mensagem são obrigatórios' });
+    }
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
     }
     const sanitizedData = {
-      name: sanitize(name),
-      email: sanitize(email),
+      userId: sanitize(userId),
       message: sanitize(message),
       replies: [],
     };
     const comment = new Comment(sanitizedData);
     await comment.save();
-    io.emit('newComment', { ...sanitizedData, _id: comment._id, createdAt: comment.createdAt });
-    res.status(201).json({ message: 'Comentário enviado com sucesso!', comment });
+    const populatedComment = await Comment.findById(comment._id).populate('userId', 'username').lean();
+    io.emit('newComment', populatedComment);
+    res.status(201).json({ message: 'Comentário enviado com sucesso!', comment: populatedComment });
   } catch (error) {
     console.error('Erro ao salvar comentário:', error);
     res.status(500).json({ error: 'Erro ao salvar comentário', details: error.message });
@@ -168,25 +170,29 @@ app.post('/api/comments', async (req, res) => {
 // Criar resposta
 app.post('/api/comments/reply', async (req, res) => {
   try {
-    const { name, email, message, parentId } = req.body;
-    console.log('Resposta recebida:', { name, email, message, parentId });
-    if (!name || !email || !message || !parentId) {
-      return res.status(400).json({ error: 'Nome, email, mensagem e parentId são obrigatórios' });
+    const { userId, message, parentId } = req.body;
+    console.log('Resposta recebida:', { userId, message, parentId });
+    if (!userId || !message || !parentId) {
+      return res.status(400).json({ error: 'Usuário, mensagem e parentId são obrigatórios' });
     }
-    const sanitizedData = {
-      name: sanitize(name),
-      email: sanitize(email),
-      message: sanitize(message),
-      createdAt: new Date(),
-    };
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
     const comment = await Comment.findById(parentId);
     if (!comment) {
       return res.status(404).json({ error: 'Comentário pai não encontrado' });
     }
+    const sanitizedData = {
+      userId: sanitize(userId),
+      message: sanitize(message),
+      createdAt: new Date(),
+    };
     comment.replies.push(sanitizedData);
     await comment.save();
-    io.emit('newReply', { reply: sanitizedData, parentId });
-    res.status(201).json({ message: 'Resposta enviada com sucesso!', reply: sanitizedData });
+    const populatedReply = { ...sanitizedData, userId: { _id: user._id, username: user.username } };
+    io.emit('newReply', { reply: populatedReply, parentId });
+    res.status(201).json({ message: 'Resposta enviada com sucesso!', reply: populatedReply });
   } catch (error) {
     console.error('Erro ao salvar resposta:', error);
     res.status(500).json({ error: 'Erro ao salvar resposta', details: error.message });
@@ -196,7 +202,12 @@ app.post('/api/comments/reply', async (req, res) => {
 // Obter comentários
 app.get('/api/comments', async (req, res) => {
   try {
-    const comments = await Comment.find().sort({ createdAt: -1 }).limit(50).lean();
+    const comments = await Comment.find()
+      .populate('userId', 'username')
+      .populate('replies.userId', 'username')
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
     res.status(200).json(comments);
   } catch (error) {
     console.error('Erro ao obter comentários:', error);
