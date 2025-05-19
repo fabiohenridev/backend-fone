@@ -59,7 +59,15 @@ mongoose.connect('mongodb+srv://henri8274:1QCtcecpyFCS7oQF@cluster0.u63gt3d.mong
   maxPoolSize: 10,
 })
   .then(() => console.log('✅ Conectado ao MongoDB'))
-  .catch(err => console.error('❌ Erro ao conectar ao MongoDB:', err.message));
+  .catch(err => {
+    console.error('❌ Erro ao conectar ao MongoDB:', err.message);
+    process.exit(1); // Encerra o processo se a conexão falhar
+  });
+
+// Monitorar estado da conexão
+mongoose.connection.on('disconnected', () => console.log('MongoDB desconectado'));
+mongoose.connection.on('reconnected', () => console.log('MongoDB reconectado'));
+mongoose.connection.on('error', (err) => console.error('Erro MongoDB:', err));
 
 // Esquemas
 const userSchema = new mongoose.Schema({
@@ -158,7 +166,7 @@ app.post('/api/comments', async (req, res) => {
     };
     const comment = new Comment(sanitizedData);
     await comment.save();
-    const populatedComment = await Comment.findById(comment._id).populate('userId', 'username').lean();
+    const populatedComment = await Comment.findById(comment._id).populate('userId', 'username email').lean();
     io.emit('newComment', populatedComment);
     res.status(201).json({ message: 'Comentário enviado com sucesso!', comment: populatedComment });
   } catch (error) {
@@ -190,7 +198,7 @@ app.post('/api/comments/reply', async (req, res) => {
     };
     comment.replies.push(sanitizedData);
     await comment.save();
-    const populatedReply = { ...sanitizedData, userId: { _id: user._id, username: user.username } };
+    const populatedReply = { ...sanitizedData, userId: { _id: user._id, username: user.username, email: user.email } };
     io.emit('newReply', { reply: populatedReply, parentId });
     res.status(201).json({ message: 'Resposta enviada com sucesso!', reply: populatedReply });
   } catch (error) {
@@ -203,8 +211,8 @@ app.post('/api/comments/reply', async (req, res) => {
 app.get('/api/comments', async (req, res) => {
   try {
     const comments = await Comment.find()
-      .populate('userId', 'username')
-      .populate('replies.userId', 'username')
+      .populate('userId', 'username email')
+      .populate('replies.userId', 'username email')
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
