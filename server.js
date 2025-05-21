@@ -10,7 +10,6 @@ const sanitize = require('mongo-sanitize');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Criar servidor HTTP e integrar Socket.IO
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -22,7 +21,6 @@ const io = new Server(server, {
   pingInterval: 25000,
 });
 
-// Middleware
 app.use(helmet());
 app.use(express.json());
 app.use(cors({
@@ -31,27 +29,23 @@ app.use(cors({
   allowedHeaders: ['Content-Type'],
 }));
 
-// Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
+  windowMs: 15 * 60 * 1000,
   max: 100,
   message: 'Muitas requisições. Tente novamente mais tarde.',
 });
 app.use('/api/', limiter);
 
-// Logging de requisições
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
-// Tratamento de erros
 app.use((err, req, res, next) => {
   console.error(`[${new Date().toISOString()}] Erro:`, err.stack);
   res.status(500).json({ error: 'Erro interno do servidor', details: err.message });
 });
 
-// Conexão MongoDB
 mongoose.connect('mongodb+srv://henri8274:1QCtcecpyFCS7oQF@cluster0.u63gt3d.mongodb.net/fone-ouvido?retryWrites=true&w=majority', {
   serverSelectionTimeoutMS: 10000,
   connectTimeoutMS: 10000,
@@ -61,10 +55,9 @@ mongoose.connect('mongodb+srv://henri8274:1QCtcecpyFCS7oQF@cluster0.u63gt3d.mong
   .then(() => console.log('✅ Conectado ao MongoDB'))
   .catch(err => {
     console.error('❌ Erro ao conectar ao MongoDB:', err.message);
-    process.exit(1); // Encerra o processo se a conexão falhar
+    process.exit(1);
   });
 
-// Monitorar estado da conexão
 mongoose.connection.on('disconnected', () => console.log('MongoDB desconectado'));
 mongoose.connection.on('reconnected', () => console.log('MongoDB reconectado'));
 mongoose.connection.on('error', (err) => console.error('Erro MongoDB:', err));
@@ -101,28 +94,29 @@ const commentSchema = new mongoose.Schema({
   }],
 });
 
+const visitSchema = new mongoose.Schema({
+  timestamp: { type: Date, default: Date.now },
+});
+
 const User = mongoose.model('User', userSchema);
 const Comment = mongoose.model('Comment', commentSchema);
+const Visit = mongoose.model('Visit', visitSchema);
 
-// Socket.IO
 io.on('connection', (socket) => {
   console.log(`Cliente conectado: ${socket.id}`);
   socket.on('disconnect', (reason) => console.log(`Cliente desconectado: ${socket.id}, motivo: ${reason}`));
   socket.on('error', (error) => console.error(`Erro Socket.IO: ${error.message}`));
 });
 
-// Health check
 app.get('/', (req, res) => {
   res.status(200).json({ message: 'Servidor OK', status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Ping
 app.get('/ping', (req, res) => {
   console.log(`[${new Date().toISOString()}] Ping recebido`);
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Registrar usuário
 app.post('/api/users/register', async (req, res) => {
   try {
     const { username, email } = req.body;
@@ -147,7 +141,6 @@ app.post('/api/users/register', async (req, res) => {
   }
 });
 
-// Criar comentário
 app.post('/api/comments', async (req, res) => {
   try {
     const { userId, message } = req.body;
@@ -175,7 +168,6 @@ app.post('/api/comments', async (req, res) => {
   }
 });
 
-// Criar resposta
 app.post('/api/comments/reply', async (req, res) => {
   try {
     const { userId, message, parentId } = req.body;
@@ -207,7 +199,6 @@ app.post('/api/comments/reply', async (req, res) => {
   }
 });
 
-// Obter comentários
 app.get('/api/comments', async (req, res) => {
   try {
     const comments = await Comment.find()
@@ -223,12 +214,33 @@ app.get('/api/comments', async (req, res) => {
   }
 });
 
-// 404
+// Rota para registrar uma nova visita
+app.post('/api/visits', async (req, res) => {
+  try {
+    const visit = new Visit();
+    await visit.save();
+    res.status(201).json({ message: 'Visita registrada com sucesso!' });
+  } catch (error) {
+    console.error('Erro ao registrar visita:', error);
+    res.status(500).json({ error: 'Erro ao registrar visita', details: error.message });
+  }
+});
+
+// Rota para obter o total de visitas
+app.get('/api/visits/count', async (req, res) => {
+  try {
+    const count = await Visit.countDocuments();
+    res.status(200).json({ totalVisits: count });
+  } catch (error) {
+    console.error('Erro ao obter total de visitas:', error);
+    res.status(500).json({ error: 'Erro ao obter total de visitas', details: error.message });
+  }
+});
+
 app.use((req, res) => {
   res.status(404).json({ error: `Rota ${req.url} não encontrada` });
 });
 
-// Iniciar servidor
 server.listen(port, () => {
   console.log(`🚀 Servidor rodando na porta ${port}`);
 });
