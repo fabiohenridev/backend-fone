@@ -14,8 +14,8 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: process.env.NODE_ENV === 'production' ? ['https://foness.vercel.app'] : '*',
-    methods: ['GET', 'POST'],
-    allowedHeaders: ['Content-Type'],
+    methods: ['GET', 'POST', 'DELETE'], // Adicionado DELETE
+    allowedHeaders: ['Content-Type', 'Authorization'],
   },
   pingTimeout: 60000,
   pingInterval: 25000,
@@ -25,8 +25,8 @@ app.use(helmet());
 app.use(express.json());
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' ? ['https://foness.vercel.app'] : '*',
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type'],
+  methods: ['GET', 'POST', 'DELETE'], // Adicionado DELETE
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 const limiter = rateLimit({
@@ -110,6 +110,21 @@ io.on('connection', (socket) => {
 
 app.get('/', (req, res) => {
   res.status(200).json({ message: 'Servidor OK', status: 'OK', timestamp: new Date().toISOString() });
+});
+
+app.delete('/api/visits', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || authHeader !== 'Bearer minha-chave-secreta') {
+      return res.status(401).json({ error: 'Acesso não autorizado' });
+    }
+    await Visit.deleteMany({});
+    console.log('Todas as visitas foram excluídas');
+    res.status(200).json({ message: 'Todas as visitas foram excluídas com sucesso!' });
+  } catch (error) {
+    console.error('Erro ao excluir visitas:', error);
+    res.status(500).json({ error: 'Erro ao excluir visitas', details: error.message });
+  }
 });
 
 app.get('/ping', (req, res) => {
