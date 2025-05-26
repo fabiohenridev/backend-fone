@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const sanitize = require('mongo-sanitize');
+const axios = require('axios');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -14,7 +15,7 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: process.env.NODE_ENV === 'production' ? ['https://foness.vercel.app'] : '*',
-    methods: ['GET', 'POST', 'DELETE'], // Adicionado DELETE
+    methods: ['GET', 'POST', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   },
   pingTimeout: 60000,
@@ -25,7 +26,7 @@ app.use(helmet());
 app.use(express.json());
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' ? ['https://foness.vercel.app'] : '*',
-  methods: ['GET', 'POST', 'DELETE'], // Adicionado DELETE
+  methods: ['GET', 'POST', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
@@ -96,7 +97,10 @@ const commentSchema = new mongoose.Schema({
 
 const visitSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now },
+  city: { type: String, default: 'Unknown' },
 });
+
+visitSchema.index({ city: 1 }); // Índice para otimizar consultas por cidade
 
 const User = mongoose.model('User', userSchema);
 const Comment = mongoose.model('Comment', commentSchema);
@@ -110,6 +114,55 @@ io.on('connection', (socket) => {
 
 app.get('/', (req, res) => {
   res.status(200).json({ message: 'Servidor OK', status: 'OK', timestamp: new Date().toISOString() });
+});
+
+app.post('/api/visits', async (req, res) => {
+  try {
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    let city = 'Unknown';
+    
+    try {
+      const geoResponse = await axios.get(`http://ip-api.com/json/${ip}`);
+      if (geoResponse.data.status === 'success') {
+        city = geoResponse.data.city || 'Unknown';
+      }
+    } catch (geoError) {
+      console.error('Erro ao obter geolocalização:', geoError.message);
+    }
+
+    const visit = new Visit({
+      timestamp: new Date(),
+      city: sanitize(city),
+    });
+    await visit.save();
+    res.status(201).json({ message: 'Visita registrada com sucesso!' });
+  } catch (error) {
+    console.error('Erro ao registrar visita:', error);
+    res.status(500).json({ error: 'Erro ao registrar visita', details: error.message });
+  }
+});
+
+app.get('/api/visits/count', async (req, res) => {
+  try {
+    const count = await Visit.countDocuments();
+    res.status(200).json({ totalVisits: count });
+  } catch (error) {
+    console.error('Erro ao obter total de visitas:', error);
+    res.status(500).json({ error: 'Erro ao obter total de visitas', details: error.message });
+  }
+});
+
+app.get('/api/visits/cities', async (req, res) => {
+  try {
+    const cities = await Visit.aggregate([
+      { $group: { _id: '$city', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]);
+    res.status(200).json(cities);
+  } catch (error) {
+    console.error('Erro ao obter contagem de cidades:', error);
+    res.status(500).json({ error: 'Erro ao obter contagem de cidades', details: error.message });
+  }
 });
 
 app.delete('/api/visits', async (req, res) => {
@@ -226,45 +279,6 @@ app.get('/api/comments', async (req, res) => {
   } catch (error) {
     console.error('Erro ao obter comentários:', error);
     res.status(500).json({ error: 'Erro ao obter comentários', details: error.message });
-  }
-});
-
-// Rota para registrar uma nova visita
-app.post('/api/visits', async (req, res) => {
-  try {
-    const visit = new Visit();
-    await visit.save();
-    res.status(201).json({ message: 'Visita registrada com sucesso!' });
-  } catch (error) {
-    console.error('Erro ao registrar visita:', error);
-    res.status(500).json({ error: 'Erro ao registrar visita', details: error.message });
-  }
-});
-
-// Rota para obter o total de visitas
-app.get('/api/visits/count', async (req, res) => {
-  try {
-    const count = await Visit.countDocuments();
-    res.status(200).json({ totalVisits: count });
-  } catch (error) {
-    console.error('Erro ao obter total de visitas:', error);
-    res.status(500).json({ error: 'Erro ao obter total de visitas', details: error.message });
-  }
-});
-
-// Rota para excluir todas as visitas
-app.delete('/api/visits', async (req, res) => {
-  try {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader || authHeader !== 'Bearer minha-chave-secreta') {
-      return res.status(401).json({ error: 'Acesso não autorizado' });
-    }
-    await Visit.deleteMany({});
-    console.log('Todas as visitas foram excluídas');
-    res.status(200).json({ message: 'Todas as visitas foram excluídas com sucesso!' });
-  } catch (error) {
-    console.error('Erro ao excluir visitas:', error);
-    res.status(500).json({ error: 'Erro ao excluir visitas', details: error.message });
   }
 });
 
