@@ -237,6 +237,22 @@ app.get('/api/visits/count', async (req, res) => {
   }
 });
 
+// Rota para excluir todas as visitas
+app.delete('/api/visits', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || authHeader !== 'Bearer minha-chave-secreta') {
+      return res.status(401).json({ error: 'Acesso não autorizado' });
+    }
+    await Visit.deleteMany({});
+    console.log('Todas as visitas foram excluídas');
+    res.status(200).json({ message: 'Todas as visitas foram excluídas com sucesso!' });
+  } catch (error) {
+    console.error('Erro ao excluir visitas:', error);
+    res.status(500).json({ error: 'Erro ao excluir visitas', details: error.message });
+  }
+});
+
 app.use((req, res) => {
   res.status(404).json({ error: `Rota ${req.url} não encontrada` });
 });
