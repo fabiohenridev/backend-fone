@@ -165,18 +165,34 @@ app.get('/api/visits/cities', async (req, res) => {
   }
 });
 
-app.delete('/api/visits', async (req, res) => {
+app.post('/api/visits', async (req, res) => {
   try {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader || authHeader !== 'Bearer minha-chave-secreta') {
-      return res.status(401).json({ error: 'Acesso não autorizado' });
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    console.log(`IP do cliente: ${ip}`); // Log do IP
+    let city = 'Unknown';
+
+    try {
+      const geoResponse = await axios.get(`http://ip-api.com/json/${ip}`);
+      console.log('Resposta da ip-api.com:', geoResponse.data); // Log da resposta completa
+      if (geoResponse.data.status === 'success') {
+        city = geoResponse.data.city || 'Unknown';
+      } else {
+        console.log(`Geolocalização falhou: ${geoResponse.data.message || 'Sem mensagem'}`);
+      }
+    } catch (geoError) {
+      console.error('Erro ao obter geolocalização:', geoError.message);
     }
-    await Visit.deleteMany({});
-    console.log('Todas as visitas foram excluídas');
-    res.status(200).json({ message: 'Todas as visitas foram excluídas com sucesso!' });
+
+    console.log(`Cidade registrada: ${city}`); // Log da cidade final
+    const visit = new Visit({
+      timestamp: new Date(),
+      city: sanitize(city),
+    });
+    await visit.save();
+    res.status(201).json({ message: 'Visita registrada com sucesso!' });
   } catch (error) {
-    console.error('Erro ao excluir visitas:', error);
-    res.status(500).json({ error: 'Erro ao excluir visitas', details: error.message });
+    console.error('Erro ao registrar visita:', error);
+    res.status(500).json({ error: 'Erro ao registrar visita', details: error.message });
   }
 });
 
