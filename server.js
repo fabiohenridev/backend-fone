@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const sanitize = require('mongo-sanitize');
+const axios = require('axios'); // Adicionado para chamadas à API de geolocalização
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -14,7 +15,7 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: process.env.NODE_ENV === 'production' ? ['https://foness.vercel.app'] : '*',
-    methods: ['GET', 'POST', 'DELETE'], // Adicionado DELETE
+    methods: ['GET', 'POST', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   },
   pingTimeout: 60000,
@@ -25,7 +26,7 @@ app.use(helmet());
 app.use(express.json());
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' ? ['https://foness.vercel.app'] : '*',
-  methods: ['GET', 'POST', 'DELETE'], // Adicionado DELETE
+  methods: ['GET', 'POST', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
@@ -63,43 +64,17 @@ mongoose.connection.on('reconnected', () => console.log('MongoDB reconectado'));
 mongoose.connection.on('error', (err) => console.error('Erro MongoDB:', err));
 
 // Esquemas
-const userSchema = new mongoose.Schema({
-  username: { 
-    type: String, 
-    required: true, 
-    trim: true, 
-    unique: true, 
-    minlength: 3,
-    maxlength: 20,
-    match: [/^[a-zA-Z0-9_]+$/, 'Usuário deve conter apenas letras, números ou sublinhados']
-  },
-  email: { 
-    type: String, 
-    required: true, 
-    trim: true,
-    unique: true,
-    match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Email inválido'] 
-  },
-  createdAt: { type: Date, default: Date.now },
-});
-
-const commentSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  message: { type: String, required: true, trim: true },
-  createdAt: { type: Date, default: Date.now },
-  replies: [{
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    message: { type: String, required: true, trim: true },
-    createdAt: { type: Date, default: Date.now },
-  }],
-});
-
 const visitSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now },
+  location: {
+    latitude: { type: Number },
+    longitude: { type: Number },
+    country: { type: String },
+    city: { type: String }
+  },
+  ip: { type: String }
 });
 
-const User = mongoose.model('User', userSchema);
-const Comment = mongoose.model('Comment', commentSchema);
 const Visit = mongoose.model('Visit', visitSchema);
 
 io.on('connection', (socket) => {
@@ -108,23 +83,27 @@ io.on('connection', (socket) => {
   socket.on('error', (error) => console.error(`Erro Socket.IO: ${error.message}`));
 });
 
+// Função para obter localização por IP
+async function getLocationFromIP(ip) {
+  try {
+    const response = await axios.get(`http://ip-api.com/json/${ip}`);
+    if (response.data.status === 'success') {
+      return {
+        latitude: response.data.lat,
+        longitude: response.data.lon,
+        country: response.data.country,
+        city: response.data.city
+      };
+    }
+    return {};
+  } catch (error) {
+    console.error('Erro ao obter localização por IP:', error.message);
+    return {};
+  }
+}
+
 app.get('/', (req, res) => {
   res.status(200).json({ message: 'Servidor OK', status: 'OK', timestamp: new Date().toISOString() });
-});
-
-app.delete('/api/visits', async (req, res) => {
-  try {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader || authHeader !== 'Bearer minha-chave-secreta') {
-      return res.status(401).json({ error: 'Acesso não autorizado' });
-    }
-    await Visit.deleteMany({});
-    console.log('Todas as visitas foram excluídas');
-    res.status(200).json({ message: 'Todas as visitas foram excluídas com sucesso!' });
-  } catch (error) {
-    console.error('Erro ao excluir visitas:', error);
-    res.status(500).json({ error: 'Erro ao excluir visitas', details: error.message });
-  }
 });
 
 app.get('/ping', (req, res) => {
@@ -132,108 +111,14 @@ app.get('/ping', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-app.post('/api/users/register', async (req, res) => {
-  try {
-    const { username, email } = req.body;
-    console.log('Tentativa de registro:', { username, email });
-    if (!username || !email) {
-      return res.status(400).json({ error: 'Usuário e email são obrigatórios' });
-    }
-    const sanitizedData = {
-      username: sanitize(username),
-      email: sanitize(email),
-    };
-    const existingUser = await User.findOne({ $or: [{ username: sanitizedData.username }, { email: sanitizedData.email }] });
-    if (existingUser) {
-      return res.status(400).json({ error: existingUser.username === sanitizedData.username ? 'Usuário já existe' : 'Email já registrado' });
-    }
-    const user = new User(sanitizedData);
-    await user.save();
-    res.status(201).json({ message: 'Usuário registrado com sucesso!', user: { id: user._id, username: user.username } });
-  } catch (error) {
-    console.error('Erro ao registrar usuário:', error);
-    res.status(500).json({ error: 'Erro ao registrar usuário', details: error.message });
-  }
-});
-
-app.post('/api/comments', async (req, res) => {
-  try {
-    const { userId, message } = req.body;
-    console.log('Comentário recebido:', { userId, message });
-    if (!userId || !message) {
-      return res.status(400).json({ error: 'Usuário e mensagem são obrigatórios' });
-    }
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'Usuário não encontrado' });
-    }
-    const sanitizedData = {
-      userId: sanitize(userId),
-      message: sanitize(message),
-      replies: [],
-    };
-    const comment = new Comment(sanitizedData);
-    await comment.save();
-    const populatedComment = await Comment.findById(comment._id).populate('userId', 'username email').lean();
-    io.emit('newComment', populatedComment);
-    res.status(201).json({ message: 'Comentário enviado com sucesso!', comment: populatedComment });
-  } catch (error) {
-    console.error('Erro ao salvar comentário:', error);
-    res.status(500).json({ error: 'Erro ao salvar comentário', details: error.message });
-  }
-});
-
-app.post('/api/comments/reply', async (req, res) => {
-  try {
-    const { userId, message, parentId } = req.body;
-    console.log('Resposta recebida:', { userId, message, parentId });
-    if (!userId || !message || !parentId) {
-      return res.status(400).json({ error: 'Usuário, mensagem e parentId são obrigatórios' });
-    }
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'Usuário não encontrado' });
-    }
-    const comment = await Comment.findById(parentId);
-    if (!comment) {
-      return res.status(404).json({ error: 'Comentário pai não encontrado' });
-    }
-    const sanitizedData = {
-      userId: sanitize(userId),
-      message: sanitize(message),
-      createdAt: new Date(),
-    };
-    comment.replies.push(sanitizedData);
-    await comment.save();
-    const populatedReply = { ...sanitizedData, userId: { _id: user._id, username: user.username, email: user.email } };
-    io.emit('newReply', { reply: populatedReply, parentId });
-    res.status(201).json({ message: 'Resposta enviada com sucesso!', reply: populatedReply });
-  } catch (error) {
-    console.error('Erro ao salvar resposta:', error);
-    res.status(500).json({ error: 'Erro ao salvar resposta', details: error.message });
-  }
-});
-
-app.get('/api/comments', async (req, res) => {
-  try {
-    const comments = await Comment.find()
-      .populate('userId', 'username email')
-      .populate('replies.userId', 'username email')
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .lean();
-    res.status(200).json(comments);
-  } catch (error) {
-    console.error('Erro ao obter comentários:', error);
-    res.status(500).json({ error: 'Erro ao obter comentários', details: error.message });
-  }
-});
-
 // Rota para registrar uma nova visita
 app.post('/api/visits', async (req, res) => {
   try {
-    const visit = new Visit();
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const location = await getLocationFromIP(ip);
+    const visit = new Visit({ ip, location });
     await visit.save();
+    io.emit('newVisit', { totalVisits: await Visit.countDocuments(), location });
     res.status(201).json({ message: 'Visita registrada com sucesso!' });
   } catch (error) {
     console.error('Erro ao registrar visita:', error);
@@ -249,6 +134,27 @@ app.get('/api/visits/count', async (req, res) => {
   } catch (error) {
     console.error('Erro ao obter total de visitas:', error);
     res.status(500).json({ error: 'Erro ao obter total de visitas', details: error.message });
+  }
+});
+
+// Rota para obter estatísticas de localização
+app.get('/api/visits/locations', async (req, res) => {
+  try {
+    const visits = await Visit.find().lean();
+    const countByCountry = visits.reduce((acc, visit) => {
+      const country = visit.location?.country || 'Desconhecido';
+      acc[country] = (acc[country] || 0) + 1;
+      return acc;
+    }, {});
+    const countByCity = visits.reduce((acc, visit) => {
+      const city = visit.location?.city || 'Desconhecida';
+      acc[city] = (acc[city] || 0) + 1;
+      return acc;
+    }, {});
+    res.status(200).json({ visits, countByCountry, countByCity });
+  } catch (error) {
+    console.error('Erro ao obter estatísticas de localização:', error);
+    res.status(500).json({ error: 'Erro ao obter estatísticas', details: error.message });
   }
 });
 
